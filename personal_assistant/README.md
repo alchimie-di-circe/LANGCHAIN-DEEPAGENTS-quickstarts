@@ -206,9 +206,8 @@ examples/personal_assistant/
 │
 └── src/personal_assistant/
     ├── __init__.py                   # Package exports
-    ├── email_assistant_deepagents.py # Main: Two-tiered workflow + response agent
-    ├── email_assistant_hitl_memory.py # Legacy: Original implementation (reference)
-    ├── schemas.py                    # State schemas (State, EmailAssistantState, etc.)
+    ├── email_assistant_deepagents.py # Main: Email assistant with triage tool
+    ├── schemas.py                    # State schemas (EmailAssistantState, etc.)
     ├── prompts.py                    # System prompts and memory instructions
     ├── configuration.py              # Config loading (minimal)
     ├── utils.py                      # Utilities (memory, formatting, parsing)
