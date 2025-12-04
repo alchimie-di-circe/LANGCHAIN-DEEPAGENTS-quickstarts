@@ -1,5 +1,13 @@
 """Custom middleware for email assistant HITL workflow."""
 
 from .email_assistant_hitl import EmailAssistantHITLMiddleware
+from .email_memory_injection import MemoryInjectionMiddleware
+from .email_post_interrupt import PostInterruptMemoryMiddleware
+from .email_genui import GenUIMiddleware
 
-__all__ = ["EmailAssistantHITLMiddleware"]
+__all__ = [
+    "EmailAssistantHITLMiddleware",
+    "MemoryInjectionMiddleware",
+    "PostInterruptMemoryMiddleware",
+    "GenUIMiddleware",
+]

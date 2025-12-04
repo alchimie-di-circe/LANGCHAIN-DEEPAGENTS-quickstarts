@@ -54,17 +54,22 @@ source .venv/bin/activate
 
 ### Local Deployment
 
-Start LangGraph Studio for interactive testing:
+Start LangGraph dev server for local testing:
 
 ```bash
 langgraph dev
 ```
 
-Then open [http://localhost:2024](http://localhost:2024) in your browser.
+This starts a local LangGraph server at [http://localhost:2024](http://localhost:2024) that you can connect to from various UIs.
 
-### Using Agent Inbox
+### Using the DeepAgents UI
 
-[Agent Inbox](https://github.com/langchain-ai/agent-inbox) provides a user-friendly web interface for managing human-in-the-loop interactions. Instead of programmatically handling interrupts, you can use Agent Inbox's UI to review and respond to agent actions.
+The [DeepAgents UI](https://deepagentsui.vercel.app/) ([GitHub repo](https://github.com/langchain-ai/deep-agents-ui)) provides a user-friendly web interface for interacting with LangGraph agents and managing human-in-the-loop interrupts. Instead of programmatically handling interrupts, you can use the UI to review and respond to agent actions.
+
+**Overall Flow:**
+1. **Deploy your LangGraph app**: Start locally (`langgraph dev`) or deploy to LangGraph Platform
+2. **Connect to the UI**: Open the DeepAgents UI and connect it to your deployment
+3. **Interact with interrupts**: When your agent needs approval, review and respond via the UI
 
 **Quick Setup:**
 
@@ -73,44 +78,50 @@ Then open [http://localhost:2024](http://localhost:2024) in your browser.
    langgraph dev
    ```
 
-2. Open Agent Inbox in your browser:
+2. Open the DeepAgents UI in your browser:
    ```
-   https://dev.agentinbox.ai/
+   https://deepagentsui.vercel.app/
    ```
 
 3. Connect to your local graph:
-   - Click "Settings" (gear icon) in Agent Inbox
+   - Click "Settings" or connection configuration in the UI
    - Add your LangSmith API key
-   - Create a new inbox connection:
+   - Configure your deployment:
      - **Graph ID**: `personal_assistant` (from `langgraph.json`)
      - **Deployment URL**: `http://localhost:2024` (your local dev server)
+     - Alternatively, use your LangGraph Cloud deployment URL
 
-4. Process emails through the inbox:
-   - Send an email input to your graph via LangGraph Studio or API
-   - When the agent needs approval, the interrupt appears in Agent Inbox
+4. Process emails through the UI:
+   - Send an email input to your graph
+   - When the agent generates a tool call that requires approval, an interrupt appears in the UI
    - Review the email context and proposed action
    - Choose your response:
-     - **Accept** - Execute the action as-is
-     - **Edit** - Modify the arguments and execute
-     - **Ignore** - Skip the action and end workflow
-     - **Response** - Provide feedback for the agent to incorporate
+     - **Approve** - Execute the action as-is
+     - **Reject** - Skip the action and end workflow
 
 **What You'll See:**
 
-When the email assistant interrupts (for `write_email`, `schedule_meeting`, or `Question`), Agent Inbox displays:
+When the email assistant interrupts (for `write_email`, `schedule_meeting`, or `Question`), the UI displays:
 - Original email context (subject, sender, content)
 - Proposed action (email draft or meeting invite)
-- Action details (formatted for easy review)
-- Available response options based on the tool
+- Tool call arguments (editable JSON)
+- Available response options based on the tool configuration
 
 **Memory Learning:**
 
-Agent Inbox responses automatically update the assistant's memory:
-- **Edit responses** → Updates response/calendar preferences
-- **Ignore responses** → Updates triage preferences
-- **Feedback responses** → Incorporates into next action
+UI responses automatically update the assistant's memory profiles:
+- **Reject** `write_email` or `schedule_meeting` → Updates `triage_preferences` (classification rules) using optional rejection message for better context
+- **Approve** → No memory update (agent did the right thing)
 
-This allows the assistant to learn your preferences over time and improve future suggestions.
+See the [Memory System](#memory-system) section below for detailed logic and examples.
+
+**Using LangGraph Studio:**
+
+You can also use LangGraph Studio (included with `langgraph dev`) for testing:
+- Navigate to [http://localhost:2024](http://localhost:2024)
+- View the graph visualization and execution trace
+- Handle interrupts programmatically or via the Studio UI
+- Inspect memory state and conversation history
 
 ## Architecture Overview
 
@@ -124,63 +135,132 @@ Email Input → Triage Router → [Respond / Notify / Ignore]
             Response Agent (with HITL)
 ```
 
-**Tier 1: Triage Router**
+**Tier 1: Triage Tool**
 - **Purpose**: Classify emails to avoid wasting time on irrelevant messages
 - **Classifications**:
-  - `respond` - Email requires a response → Routes to Response Agent
-  - `notify` - Important FYI email → Creates interrupt for user review
+  - `respond` - Email requires a response → Continues to draft/schedule
+  - `notify` - Important FYI email → Ends workflow with notification
   - `ignore` - Spam, marketing, or irrelevant → Ends workflow
-- **Memory**: Learns from user corrections via `triage_preferences` namespace
-- **Location**: `src/personal_assistant/email_assistant_deepagents.py:29-156`
+- **Memory**: Learns from reject decisions - when user rejects a draft, updates `triage_preferences` to avoid future misclassifications
+- **Location**: `src/personal_assistant/tools/default/email_tools.py` (triage_email tool)
 
 **Tier 2: Response Agent**
 - **Purpose**: Generate email drafts and schedule meetings with HITL approval
 - **Built with**: `create_deep_agent()` from deepagents library
-- **Custom Middleware**: `EmailAssistantHITLMiddleware` for intelligent interrupts
+- **HITL Configuration**: Uses built-in `interrupt_on` parameter for tool interrupts
+- **Custom Middleware**: `MemoryInjectionMiddleware` and `PostInterruptMemoryMiddleware` for memory management
 - **Tools**: `write_email`, `schedule_meeting`, `check_calendar_availability`, `Question`, `Done`
-- **Location**: `src/personal_assistant/email_assistant_deepagents.py:227-255`
+- **Location**: `src/personal_assistant/email_assistant_deepagents.py`
 
-### HITL Middleware System
+### HITL System
 
-Custom middleware that intercepts specific tool calls for human approval:
+The assistant uses `create_deep_agent`'s built-in `interrupt_on` parameter for HITL interrupts, with lightweight middleware for memory management:
 
-**Interrupt Filtering**:
-- Only interrupts for: `write_email`, `schedule_meeting`, `Question`
-- Other tools execute directly (e.g., `check_calendar_availability`)
+**Built-in Interrupt Handling** (via `interrupt_on` parameter):
+- **Configured tools**: `write_email`, `schedule_meeting`, `Question`
+- **Non-interrupted tools**: Execute directly (e.g., `check_calendar_availability`, `Done`)
+- **Static descriptions**: Each tool has a plain text description explaining the action and available decisions
+- **Per-tool decision configuration**: Different tools allow different decision types
 
-**Four Response Types**:
-1. **Accept** - Execute tool with original arguments
-2. **Edit** - Execute with modified arguments, update AI message immutably
-3. **Ignore** - Skip execution, end workflow, update triage memory
-4. **Response** - Provide feedback, continue workflow with updated context
+**Interrupt Configuration Format**:
+```python
+interrupt_on_config = {
+    "write_email": {
+        "allowed_decisions": ["approve", "reject"],
+        "description": "I've drafted an email response. Please review the content, recipients, and subject line below. Approve to send as-is, or Reject to cancel and end the workflow."
+    },
+    "schedule_meeting": {
+        "allowed_decisions": ["approve", "reject"],
+        "description": "I've prepared a calendar invitation. Please review the meeting details below. Approve to send the invite as-is, or Reject to cancel and end the workflow."
+    },
+    "Question": {
+        "allowed_decisions": ["approve", "reject"],
+        "description": "I need clarification before proceeding. Please review the question below and provide your response, or Reject to skip this action and end the workflow."
+    }
+}
+```
 
-**Memory Integration**:
-- Injects learned preferences into system prompt before each LLM call
-- Updates memory after user edits or feedback
+**Two Decision Types**:
+1. **Approve** - Execute tool with original arguments (no memory update)
+2. **Reject** - Skip execution, end workflow, update `triage_preferences` to avoid future false positives
+
+**What the UI Displays**:
+- The description text explaining the action and available decisions
+- Tool arguments in JSON format (to, subject, content for emails; attendees, time for meetings)
+- Decision buttons (Approve, Reject) based on `allowed_decisions` configuration
+
+**Memory Middleware**:
+- **MemoryInjectionMiddleware**: Injects learned preferences into system prompt before each LLM call
+- **PostInterruptMemoryMiddleware**: Detects rejected tool calls and updates memory profiles
+  - Uses `before_model()` hook to check for ToolMessages with `status="error"` (indicates rejection)
+  - Extracts optional rejection message from ToolMessage content
+  - **REJECT detection**: Updates `triage_preferences` with user's rejection feedback
+  - **APPROVE**: No memory update needed
 - Uses runtime store in deployment, local store in testing
 
-**Location**: `src/personal_assistant/middleware/email_assistant_hitl.py`
+**GenUI Middleware**:
+- **GenUIMiddleware**: Pushes UI messages for tool calls to enable custom UI component rendering
+- Maps tool names to UI component names for visualization in LangGraph Studio
+- Runs after model generation to create UI messages for configured tools
+- Example mapping:
+  ```python
+  tool_to_genui_map={
+      "write_email": {"component_name": "write_email"},
+      "schedule_meeting": {"component_name": "schedule_meeting"},
+  }
+  ```
+
+**Locations**:
+- Interrupt config: `src/personal_assistant/email_assistant_deepagents.py:66-100`
+- Memory injection: `src/personal_assistant/middleware/email_memory_injection.py`
+- Post-interrupt updates: `src/personal_assistant/middleware/email_post_interrupt.py`
+- GenUI: `src/personal_assistant/middleware/email_genui.py`
 
 ### Memory System
 
-Three persistent memory namespaces that learn from user behavior:
+The assistant maintains a persistent memory profile that learns from user interactions during HITL interrupts. The profile is stored in a LangGraph Store namespace and automatically updates based on user decisions.
 
-1. **`triage_preferences`** - Email classification rules
-   - Updated when: User corrects triage decisions (respond vs. notify vs. ignore)
-   - Example: "Emails from Alice about API docs should be responded to"
+#### Memory Namespaces
 
-2. **`response_preferences`** - Email writing style
-   - Updated when: User edits email drafts or provides feedback
-   - Example: "Keep responses concise, avoid formalities"
+**1. `("email_assistant", "triage_preferences")`** - Email Classification Rules
+- **Purpose**: Learns when to respond vs. notify vs. ignore emails
+- **Updated by**: REJECT decisions on `write_email` or `schedule_meeting`
+- **Update logic**: When user rejects a draft, it means the email shouldn't have been classified as "respond"
+- **Example**: "Emails from newsletter@company.com should be ignored, not responded to"
 
-3. **`cal_preferences`** - Meeting scheduling preferences
-   - Updated when: User edits meeting invitations or provides feedback
-   - Example: "Prefer 30-minute meetings, avoid Fridays"
+#### Memory Update Trigger Matrix
 
-**Storage**:
-- Local testing: `InMemoryStore()` (ephemeral)
-- Deployment: LangGraph platform store (persistent across sessions)
-- Backend: `StoreBackend` for deepagents integration
+| User Decision | Tool Call | Memory Namespace Updated | Update Reason |
+|---------------|-----------|--------------------------|---------------|
+| **REJECT** | `write_email` | `triage_preferences` | Email shouldn't have been classified as "respond" |
+| **REJECT** | `schedule_meeting` | `triage_preferences` | Meeting request shouldn't have been classified as "respond" |
+| **APPROVE** | any tool | _(none)_ | No update needed - agent did the right thing |
+
+#### How Memory Updates Work
+
+**Memory Injection** (`MemoryInjectionMiddleware`):
+- Runs **before each LLM call** via `wrap_model_call()`
+- Fetches memory profile from the store
+- Injects it into the system prompt using template variables
+- Agent sees current preferences on every turn
+
+**Memory Update Detection** (`PostInterruptMemoryMiddleware`):
+- **Before model generation** (`before_model`): Detects ToolMessages with `status="error"` (rejections)
+- **REJECT detection**: Extracts optional rejection message from ToolMessage content and updates triage preferences with user's feedback for better learning
+- **Agent behavior**: Agent is instructed to call Done tool immediately after receiving a rejection to end the workflow
+
+**Memory Update Process**:
+1. Build prompt with current memory profile + user's feedback (reject reason)
+2. Call LLM with structured output to update profile
+3. LLM returns updated profile with reasoning (via `UserPreferences` schema)
+4. Save updated profile back to store namespace
+5. Next LLM call will see the updated preferences
+
+**Storage Backend**:
+- **Local testing**: `InMemoryStore()` (ephemeral, resets on restart)
+- **Deployment**: LangGraph platform store (persistent across sessions)
+- **Integration**: `StoreBackend` for deepagents compatibility
+- **Access**: Middleware uses `runtime.store` in deployment, `self.store` in local testing
 
 ### Deployment Modes
 
@@ -215,7 +295,10 @@ examples/personal_assistant/
     │
     ├── middleware/
     │   ├── __init__.py
-    │   └── email_assistant_hitl.py   # Custom HITL middleware with memory
+    │   ├── email_assistant_hitl.py   # DEPRECATED: Legacy HITL middleware (kept for reference)
+    │   ├── email_memory_injection.py # Memory injection into system prompts
+    │   ├── email_post_interrupt.py   # Post-interrupt memory updates
+    │   └── email_genui.py            # GenUI integration for tool visualization
     │
     └── tools/
         ├── __init__.py
@@ -371,10 +454,11 @@ This allows the LangGraph platform to provide persistent storage, checkpointing,
 
 ## Features
 
-- **Two-Tiered Architecture**: Triage router + response agent for efficient email handling
-- **Custom HITL Middleware**: Sophisticated interrupt handling with tool filtering
-- **Persistent Memory**: Learns from user feedback across 3 namespaces
-- **Four Response Types**: Accept, edit, ignore, or provide feedback on agent actions
+- **Integrated Triage**: Single deepagent with triage tool for efficient email classification
+- **Built-in Interrupt System**: Uses `interrupt_on` parameter with clear descriptions for UI display
+- **Persistent Memory**: Learns from user feedback to improve triage classification
+- **Two Decision Types**: Approve or reject actions with automatic memory updates
+- **GenUI Integration**: Custom UI components for tool visualization in LangGraph Studio
 - **Async Support**: Works with both sync and async invocation (invoke/ainvoke, stream/astream)
 - **Deployment Ready**: Optimized for LangGraph Cloud with platform-provided persistence
 

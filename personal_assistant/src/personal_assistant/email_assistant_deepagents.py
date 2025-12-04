@@ -17,7 +17,7 @@ from langgraph.store.memory import InMemoryStore
 from deepagents import create_deep_agent
 from deepagents.backends import StoreBackend
 
-from .middleware import EmailAssistantHITLMiddleware
+from .middleware import MemoryInjectionMiddleware, PostInterruptMemoryMiddleware, GenUIMiddleware
 from .schemas import EmailAssistantState
 from .tools import get_tools
 from .utils import format_email_markdown, parse_email, get_memory
@@ -63,15 +63,31 @@ def create_email_assistant(for_deployment=False):
         store_kwarg = {"store": store}
         checkpointer_kwarg = {"checkpointer": checkpointer}
 
-    # Create custom HITL middleware
-    hitl_middleware = EmailAssistantHITLMiddleware(
-        store=store,
-        interrupt_on={
-            "write_email": True,
-            "schedule_meeting": True,
-            "Question": True,
+    # Define interrupt configurations with plain text descriptions
+    interrupt_on_config = {
+        "write_email": {
+            "allowed_decisions": ["approve", "reject"],
+            "description": "I've drafted an email response. Please review the content, recipients, and subject line below. Approve to send as-is, or Reject to cancel and end the workflow."
         },
-    )
+        "schedule_meeting": {
+            "allowed_decisions": ["approve", "reject"],
+            "description": "I've prepared a calendar invitation. Please review the meeting details below. Approve to send the invite as-is, or Reject to cancel and end the workflow."
+        },
+        "Question": {
+            "allowed_decisions": ["approve", "reject"],
+            "description": "I need clarification before proceeding. Please review the question below and provide your response, or Reject to skip this action and end the workflow."
+        }
+    }
+
+    # Create middleware instances
+    memory_injection = MemoryInjectionMiddleware(store=store)
+    post_interrupt_memory = PostInterruptMemoryMiddleware(store=store)
+    genui = GenUIMiddleware(tool_to_genui_map={
+        "write_email": {"component_name": "write_email"},
+        "schedule_meeting": {"component_name": "schedule_meeting"},
+        "check_calendar_availability": {"component_name": "check_calendar_availability"},
+        "Question": {"component_name": "question"},
+    })
 
     # Build system prompt with default preferences
     # Note: Memory-based preferences can be accessed via the store in middleware
@@ -88,10 +104,11 @@ def create_email_assistant(for_deployment=False):
     agent = create_deep_agent(
         model=model,
         tools=tools,
-        middleware=[hitl_middleware], # Custom middleware added to default stack
-        backend=lambda rt: StoreBackend(rt), # Persistent storage for memory
+        middleware=[memory_injection, post_interrupt_memory, genui],
+        backend=lambda rt: StoreBackend(rt),
         context_schema=EmailAssistantState,
         system_prompt=system_prompt,
+        interrupt_on=interrupt_on_config,  # NEW: Built-in interrupt handling
         **store_kwarg,
         **checkpointer_kwarg,
     )
