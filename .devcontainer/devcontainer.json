@@ -1,0 +1,33 @@
+{
+  "name": "deepagents-quickstarts",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {},
+    "ghcr.io/devcontainers-contrib/features/1password-cli:1": {},
+    "ghcr.io/devcontainers-contrib/features/direnv:1": {}
+  },
+  "customizations": {
+    "codespaces": {
+      "machine": "universal"
+    },
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "charliermarsh.ruff",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  },
+  "postCreateCommand": "pip install uv && cd deep_research && uv sync && pip install --upgrade 'langgraph-cli[inmem]'",
+  "postStartCommand": "eval \"$(direnv hook bash)\" && direnv allow",
+  "forwardPorts": [2024, 8888],
+  "mounts": [
+    "source=${localEnv:HOME}/.op/config,target=/home/vscode/.op/config,type=bind,consistency=cached"
+  ],
+  "remoteEnv": { 
+      
+    "LANGSMITH_TRACING": "true",
+    "LANGSMITH_PROJECT": "deepagents-research"
+  }
+}
