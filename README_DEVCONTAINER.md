@@ -1,67 +1,64 @@
 # DevContainer Setup for deepagents-quickstarts
 
-Questa guida descrive come configurare un DevContainer production-ready per lo sviluppo locale sicuro, con integrazione 1Password + direnv.
+This guide describes how to configure a production-ready DevContainer for secure local development with 1Password + direnv integration.
 
-## Setup Iniziale (First Time)
+## First-Time Setup
 
 ```bash
-# Step 1: Autenticare 1Password CLI
+# Step 1: Authenticate 1Password CLI
 op account add
 
-# Step 2: Verificare accesso vault
+# Step 2: Verify vault access
 op vault list
 
-# Step 3: Popolare vault con le API keys
+# Step 3: Configure your 1Password vault name
+# Create a file named .env in the root of the repository with the following content,
+# replacing "Your Vault Name" with your actual 1Password vault name.
+# This file is ignored by git.
+echo 'export OP_VAULT="Your Vault Name"' > .env
+
+# Step 4: Populate your vault with the required API keys
 # - Anthropic: https://console.anthropic.com/account/keys
 # - OpenAI: https://platform.openai.com/account/api-keys
 # - Tavily: https://app.tavily.com/home
 # - LangSmith: https://smith.langchain.com/settings
 
-# Step 4: Aprire in VS Code
+# Step 5: Open in VS Code
 code .
-# Selezionare "Reopen in Container"
+# Select "Reopen in Container" when prompted.
 
-# Step 5: Permettere direnv
-
+# Step 6: Allow direnv
+# Once the container is running, direnv will prompt for permission.
 direnv allow
 ```
 
-## Workflow Development Quotidiano
+## What This Setup Provides
 
-```bash
-# Avviare LangGraph server
-cd deep_research
-langgraph dev
-
-# In un altro terminale: Jupyter notebook
-jupyter notebook --ip=0.0.0.0
-
-# Testare l'agent
-python -c "from deep_research import agent; print(agent)"
-```
+1. **1Password Integration**: Securely manages API keys via 1Password CLI
+2. **direnv Support**: Automatically loads environment variables when entering the directory
+3. **VS Code DevContainer**: Full development environment with Python, Node.js, and tools
+4. **LangSmith Configuration**: Pre-configured for tracing and project management
 
 ## Troubleshooting
 
-### direnv non carica le variabili
-- Verifica di aver eseguito `direnv allow` nella root del repo.
-- Assicurati che `.envrc` esista e sia leggibile.
+### OP_VAULT not set
+If you see an error about `OP_VAULT` not being set:
+1. Make sure you've created the `.env` file in the root directory
+2. Verify the vault name matches your actual 1Password vault
+3. Run `direnv allow` after creating/updating the `.env` file
 
-### 1Password CLI authentication expired
-- Esegui di nuovo `op account add` oppure `op signin`.
-- Verifica l'accesso con `op vault list`.
+### 1Password CLI not authenticated
+If direnv fails with an authentication error:
+1. Run `op account add` to authenticate
+2. Run `direnv allow` again
 
-### Porta 2024 già in uso
-- Chiudi il processo che usa la porta o avvia LangGraph su un'altra porta.
-- Verifica con `lsof -i :2024`.
+### direnv not installed
+If direnv is not installed in the container:
+1. The container will provide instructions in the terminal
+2. Install it manually via the 1Password CLI or set environment variables directly in your shell
 
-### Module not found errors
-- Assicurati di aver eseguito `uv sync`.
-- Se necessario, entra in `deep_research` e riesegui `uv sync`.
+## Additional Resources
 
-## Note
-
-- Isolamento completo: tutto gira nel container, zero impatto sul Mac host.
-- Performance: Docker layer caching per rebuild veloci.
-- Compatibilità: Mac, Linux, Windows, GitHub Codespaces.
-- Team-friendly: chiunque può clonare e avviare in pochi minuti.
-- Audit trail: 1Password traccia ogni accesso alle secrets.
+- [1Password CLI Documentation](https://developer.1password.com/docs/cli)
+- [direnv Documentation](https://direnv.net)
+- [VS Code DevContainers](https://code.visualstudio.com/docs/remote/containers)
